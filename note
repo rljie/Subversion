@@ -1,0 +1,111 @@
+1.安装Subversion服务器（在web1上操作）
+   # yum -y install subversion     --此软件也在web2上安装
+
+  创建版本库
+   # mkdir /var/svn/
+   # svnadmin create /var/svn/project
+   # ls /var/svn/project/
+
+  本地导入初始化数据
+   # cd /usr/lib/systemd/system/
+   # svn import . file:///var/svn/project/ -m "Init Data"     --“.”表示当前路径；"-m"后面表示注释内容（重要）
+
+2.修改配置文件（创建账户与密码）（所有配置文件要求顶头写，开头不能有空格）
+   # vim /var/svn/project/conf/svnserve.conf      --账户文件，修改为以下内容    
+19       anon-access = none        --匿名无任何权限
+20       auth-access = write       --有效账户可写
+27       password-db = passwd      --密码文件
+34       authz-db = authz          --ACL访问控制列表文件
+   # vim /var/svn/project/conf/passwd     --密码文件，修改为以下内容
+         [users]
+         harry = 123456
+         tom = 123456
+   # vim /var/svn/project/conf/authz      --定义ACL访问控制，添加以下内容
+            [/]
+         harry = rw      --用户对项目根路径可读可写
+         tom = rw
+   # svnserve -d -r /var/svn/project     --启动服务
+
+3.客户端测试（在web2上测试操作）
+   # cd /tmp
+   # svn --username harry --password 123456 \ 
+         co svn://192.168.2.100 code     --从服务器192.168.2.100上co下载代码到本地code目录
+   # cd /tmp/code
+   # vim user.slice                      --修改任意文件的内容
+   # svn ci -m "modify user"             --将本地修改的数据同步到服务器
+   
+   # svn update                          --将服务器上新的数据同步到本地
+   # svn info svn://192.168.2.100        --查看版本仓库基本信息
+   # svn log svn://192.168.2.100         --查看版本仓库的日志
+   
+   # echo "test" > test.sh               --本地新建一个文件
+   # svn add test.sh                     --将文件或目录加入版本控制，否则提交失败
+   # svn ci -m "new file"                --提交成功
+
+   # svn mkdir subdir                    --创建子目录
+   # svn rm test.sh                      --使用svn删除文件
+   # svn ci -m "rm file"                 --提交一次代码
+  
+   # vim umount.target                   --任意修改本地的一个文件
+   # svn diff                            --查看所有文件的差异
+   # svn diff umount.target              --仅查看某一个文件的差异
+   # svn cat svn://192.168.2.100/umount.target      --查看服务器文件的内容
+
+   # sed -i 'd' tmp.mount                --删除文件所有内容，但未提交
+   # svn revert tmp.mount                --还原tmp.mount文件
+
+   # rm -rf *.target                     --任意删除若干文件
+   # svn update                          --还原
+
+   # sed -i '1a#test###' tuned.service   --修改本地副本中的代码文件
+   # svn ci -m "xxx"                     --提交代码
+   # svn merge -r7:2 tuned.service       --例如将文件从版本7还原到版本2
+
+4.使用Subversion协同工作
+   web1    
+   # cd /tmp
+   # svn --username tom --password 123456 co svn://192.168.2.100 code
+   # cd code 
+   web2
+   # cd /tmp
+   # svn --username harry --password 123456 co svn://192.168.2.100 code    --已操作
+   # cd code 
+
+   harry和tom修改不同的文件
+   web1
+   # sed -i '3a tom' tmp.mount
+   # svn ci -m "has modified"
+   # svn update
+   web2
+   # sed -i '6a harry' tmp.mount
+   # svn ci -m "has modified"
+   # svn update
+
+   harry和tom修改相同文件的不同行
+   web1
+   # sed -i '3a xxx' user.slice
+   # svn ci -m "modified"
+   web2
+   # sed -i '6a xxx' user.slice
+   # svn ci -m "modified"    --提交失败，过时
+   # svn update              --更新后再提交即可成功
+   # svn ci -m "modified" 
+   
+   harry和tom修改相同文件的相同行
+   web1
+   # sed -i '1c [UNIT]' tuned.service
+   # svn ci -m "unit"
+   web2
+   # sed -i '1c [unit]' tuned.service
+   # svn ci -m "unit"        --提交失败，过时
+   # svn update              --出现冲突，需要解决；先选择标p，随后解决
+    解决冲突
+   # ls tuned.service*
+   # mv tuned.service.mine tuned.service
+   # rm -rf tuned.service.r10 tuned.service.r9      --删除多余的版本文件，只留下tuned.service
+   # svn ci -m "unit"        --提交成功
+
+5.使用dump指令备份版本库数据（在web1上操作）
+   # svnadmin dump /var/svn/project > project.bak   --备份
+   # svnadmin create /var/svn/project3              --新建空仓库
+   # svnadmin load /var/svn/project2 < project.bak  --还原
